@@ -1,0 +1,8 @@
+numpy==2.2.5
+openai==1.78.1
+pandas==2.2.3
+pdf2image==1.17.0
+pypdf==5.5.0
+rdkit==2023.9.2
+rdkit_pypi==2022.9.5
+tqdm==4.66.1
