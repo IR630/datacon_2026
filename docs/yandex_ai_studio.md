@@ -48,6 +48,15 @@ api.txt
 YANDEX_FOLDER_ID=<your-folder-id>
 ```
 
+Также поддерживается короткий формат:
+
+```text
+api.txt
+------
+<your-yandex-api-key>
+<your-folder-id>
+```
+
 Альтернативно через `.env`:
 
 ```text

@@ -32,6 +32,7 @@ def _load_api_txt(path: str | Path = "api.txt") -> dict[str, str]:
     if not api_path.exists():
         return {}
     values: dict[str, str] = {}
+    positional: list[str] = []
     for raw_line in api_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -39,8 +40,12 @@ def _load_api_txt(path: str | Path = "api.txt") -> dict[str, str]:
         if "=" in line:
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip().strip('"').strip("'")
-        elif "YANDEX_API_KEY" not in values:
-            values["YANDEX_API_KEY"] = line
+        else:
+            positional.append(line)
+    if positional and "YANDEX_API_KEY" not in values:
+        values["YANDEX_API_KEY"] = positional[0]
+    if len(positional) > 1 and "YANDEX_FOLDER_ID" not in values:
+        values["YANDEX_FOLDER_ID"] = positional[1]
     return values
 
 
@@ -143,9 +148,43 @@ class LLMClient:
             kwargs["project"] = self.settings.yandex_folder_id
         return OpenAI(**kwargs)
 
+    def _messages_to_prompt(self, messages: list[dict[str, str]]) -> str:
+        parts = []
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            parts.append(f"{role.upper()}:\n{content}")
+        return "\n\n".join(parts)
+
+    def _response_text(self, resp: Any) -> str:
+        output_text = getattr(resp, "output_text", None)
+        if isinstance(output_text, str):
+            return output_text
+        output = getattr(resp, "output", None)
+        if output:
+            chunks = []
+            for item in output:
+                for content in getattr(item, "content", []) or []:
+                    text = getattr(content, "text", "")
+                    if text:
+                        chunks.append(text)
+            if chunks:
+                return "\n".join(chunks)
+        return ""
+
     def complete_text(self, messages: list[dict[str, str]], max_output_tokens: int | None = None) -> str:
         client = self._openai_client()
         model = self.settings.resolved_model()
+        if self.settings.provider == "yandex" and hasattr(client, "responses"):
+            resp = client.responses.create(
+                model=model,
+                input=self._messages_to_prompt(messages),
+                temperature=self.settings.temperature,
+                max_output_tokens=max_output_tokens or self.settings.max_output_tokens,
+            )
+            text = self._response_text(resp)
+            if text:
+                return text
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
