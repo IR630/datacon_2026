@@ -263,11 +263,15 @@ def cmd_llm_smoke(args: argparse.Namespace) -> None:
 
     messages = [{"role": "user", "content": args.prompt}]
     try:
-        text = LLMClient(settings).complete_text(messages, max_output_tokens=args.max_output_tokens)
+        llm = LLMClient(settings)
+        text = llm.complete_text(messages, max_output_tokens=args.max_output_tokens)
     except LLMNotConfigured as exc:
         raise SystemExit(f"LLM is not configured: {exc}") from exc
     print("LLM response:")
     print(text)
+    if llm.last_usage:
+        print("LLM usage:")
+        print(json.dumps(llm.last_usage, ensure_ascii=False, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -1,5 +1,46 @@
 # Progress Log
 
+## 2026-06-28
+
+### Done
+
+- Added `llm-smoke` usage printing, so AI Studio token usage is visible locally.
+- Checked Yandex AI Studio models with tiny smoke requests:
+  - `deepseek-v4-flash`: OK, `34` total tokens;
+  - `aliceai-llm-flash`: OK, `17` total tokens;
+  - `qwen3-235b-a22b-fp8`: OK, `14` total tokens;
+  - `qwen3.6-35b-a3b`: accessible but returns no final text in current wrapper, spends tokens;
+  - `gpt-oss-120b`: accessible but returns no final text in current wrapper on short smoke.
+- Added model notes: `docs/model_strategy.md`.
+
+### Balance Note
+
+AI Studio API calls are working. If the balance does not visibly change, likely reasons:
+
+- our smoke tests used only tens of tokens;
+- cost is too small to notice in the UI;
+- billing UI may update with delay.
+
+Do not use `qwen3.6-35b-a3b` or `gpt-oss-120b` in loops until their response format is fixed, because they can consume output tokens without useful final text.
+
+### Night Plan For Teammates
+
+1. Keep `deepseek-v4-flash` as default extraction model.
+2. Use `aliceai-llm-flash` for cheap prompt/debug experiments.
+3. Use `qwen3-235b-a22b-fp8` only as a second text-quality comparison.
+4. Generate submission-like predictions as:
+
+```text
+blank prior rows for all 65 target PDFs
++ extracted rows for PDFs available in data/pdfs
+```
+
+5. Improve PDF coverage before improving prompts:
+   - Crossref resolver already downloaded 6 PDFs;
+   - add Unpaywall/OpenAlex/publisher heuristics next.
+6. Improve parser with `pdfplumber` and `PyMuPDF` installed locally if possible.
+7. Then improve `ActivityExtractorAgent` prompts and table extraction for `bacteria`, `strain`, `method`, `MIC`, `ZOI`.
+
 ## 2026-06-27
 
 ### Done

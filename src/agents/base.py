@@ -127,6 +127,7 @@ class LLMSettings:
 class LLMClient:
     def __init__(self, settings: LLMSettings | None = None) -> None:
         self.settings = settings or LLMSettings.from_env()
+        self.last_usage: dict[str, Any] = {}
 
     def _openai_client(self) -> Any:
         if self.settings.provider in {"", "disabled", "none"}:
@@ -172,6 +173,18 @@ class LLMClient:
                 return "\n".join(chunks)
         return ""
 
+    def _capture_usage(self, resp: Any) -> None:
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            self.last_usage = {}
+            return
+        if hasattr(usage, "model_dump"):
+            self.last_usage = usage.model_dump()
+        elif isinstance(usage, dict):
+            self.last_usage = dict(usage)
+        else:
+            self.last_usage = {}
+
     def complete_text(self, messages: list[dict[str, str]], max_output_tokens: int | None = None) -> str:
         client = self._openai_client()
         model = self.settings.resolved_model()
@@ -182,6 +195,7 @@ class LLMClient:
                 temperature=self.settings.temperature,
                 max_output_tokens=max_output_tokens or self.settings.max_output_tokens,
             )
+            self._capture_usage(resp)
             text = self._response_text(resp)
             if text:
                 return text
@@ -191,6 +205,7 @@ class LLMClient:
             temperature=self.settings.temperature,
             max_tokens=max_output_tokens or self.settings.max_output_tokens,
         )
+        self._capture_usage(resp)
         return resp.choices[0].message.content or ""
 
     def complete_json(self, messages: list[dict[str, str]], schema: dict[str, Any] | None = None) -> Any:
@@ -212,4 +227,5 @@ class LLMClient:
             max_tokens=self.settings.max_output_tokens,
             response_format=response_format,
         )
+        self._capture_usage(resp)
         return resp.choices[0].message.content or ""
