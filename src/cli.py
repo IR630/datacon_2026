@@ -157,16 +157,7 @@ def cmd_llm_smoke(args: argparse.Namespace) -> None:
     if args.dry_run:
         return
 
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a strict information extraction assistant. Return compact JSON only.",
-        },
-        {
-            "role": "user",
-            "content": args.prompt,
-        },
-    ]
+    messages = [{"role": "user", "content": args.prompt}]
     try:
         text = LLMClient(settings).complete_text(messages, max_output_tokens=args.max_output_tokens)
     except LLMNotConfigured as exc:
@@ -228,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-output-tokens", type=int, default=128)
     p.add_argument(
         "--prompt",
-        default='Extract JSON from this sentence: "SelTox uses AgNPs against E. coli."',
+        default="Say OK",
     )
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func=cmd_llm_smoke)
