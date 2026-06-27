@@ -57,7 +57,7 @@ Fields:
 Rules:
 - Return JSON object with key "records".
 - Each record must contain all fields above.
-- Use "NOT_DETECTED" for missing values.
+- Use "NOT_DETECTED" for missing text fields and "nan" for missing numeric fields.
 - Normalize common bacteria names when obvious, e.g. E. coli -> Escherichia coli.
 - Numeric fields must contain only the number when possible, without units.
 - MIC is usually in µg/mL; ZOI is usually in mm; time_set_hours is incubation/exposure time in hours.
@@ -102,13 +102,13 @@ Evidence:
         for name in bacteria:
             record = dict(base)
             record["bacteria"] = name
-            if mic:
+            if mic != "nan":
                 record["method"] = "MIC"
                 record["mic_np_µg_ml"] = mic
-            if zoi:
+            if zoi != "nan":
                 record["method"] = "ZOI" if record["method"] == "NOT_DETECTED" else record["method"]
                 record["zoi_np_mm"] = zoi
-            if time_hours:
+            if time_hours != "nan":
                 record["time_set_hours"] = time_hours
             records.append(record)
         return records
@@ -116,9 +116,9 @@ Evidence:
     def _normalize_activity_record(self, raw: dict[str, Any]) -> dict:
         record = blank_record()
         for field in self.fields:
-            value = raw.get(field, "NOT_DETECTED")
+            value = raw.get(field, record[field])
             if value in (None, "", []):
-                value = "NOT_DETECTED"
+                value = record[field]
             record[field] = str(value).strip()
         record["np"] = normalize_np(record["np"])
         record["bacteria"] = normalize_bacteria(record["bacteria"])
@@ -179,10 +179,10 @@ Evidence:
         )
         if unit_first:
             return normalize_number(unit_first.group(1))
-        return "NOT_DETECTED"
+        return "nan"
 
     def _find_time_hours(self, text: str) -> str:
         match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|hours)\b[^\n\r]{0,50}(?:incubat|exposure)", text, re.IGNORECASE)
         if not match:
             match = re.search(r"(?:incubat|exposure)[^\n\r]{0,50}(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|hours)\b", text, re.IGNORECASE)
-        return normalize_number(match.group(1)) if match else "NOT_DETECTED"
+        return normalize_number(match.group(1)) if match else "nan"
