@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -14,7 +16,8 @@ from src.agents.nanoparticle_extractor import NanoparticleExtractorAgent
 from src.agents.synthesis_extractor import SynthesisExtractorAgent
 from src.agents.validator import ValidatorAgent
 from src.baseline_bridge import article_subset, dataset_id, extracted_columns, numeric_columns, schema_path
-from src.eval.chemx_metric_adapter import evaluate_prediction_file, load_local_gold
+from src.data.pdf_resolver import resolve_one_pdf
+from src.eval.chemx_metric_adapter import evaluate_frames, evaluate_prediction_file, load_gold, load_local_gold, prepare_gold
 from src.parse.ensemble import parse_pdf
 from src.postprocess.deduplicate import deduplicate_records
 from src.postprocess.link_records import merge_article_level_records
@@ -140,6 +143,107 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         print(f"Saved metrics: {out}")
 
 
+def cmd_cache_gold(args: argparse.Namespace) -> None:
+    try:
+        from huggingface_hub import HfApi, hf_hub_download
+    except Exception as exc:
+        raise SystemExit("huggingface_hub is not installed") from exc
+
+    domain = args.domain.lower()
+    repo_id = dataset_id(domain)
+    files = HfApi().list_repo_files(repo_id, repo_type="dataset")
+    candidates = [name for name in files if name.endswith((".parquet", ".csv"))]
+    if not candidates:
+        raise SystemExit(f"No parquet/csv files found in {repo_id}")
+    candidate = sorted(candidates)[0]
+    src = hf_hub_download(repo_id, candidate, repo_type="dataset")
+    suffix = Path(candidate).suffix
+    out = Path(args.gold_dir) / f"{domain}{suffix}"
+    ensure_dir(out.parent)
+    shutil.copyfile(src, out)
+    print(f"Cached {repo_id}:{candidate} -> {out}")
+
+
+def cmd_inspect_gold(args: argparse.Namespace) -> None:
+    domain = args.domain.lower()
+    raw = load_local_gold(domain, args.gold_dir)
+    if raw is None:
+        raise SystemExit(f"No local gold found in {args.gold_dir}; run cache-gold first.")
+    prepared = prepare_gold(domain, raw)
+    cols = extracted_columns(domain)
+    print(f"Raw shape: {raw.shape}")
+    print(f"Prepared shape: {prepared.shape}")
+    if "pdf" in raw.columns:
+        print(f"Raw PDF count: {raw['pdf'].nunique()}")
+    if "pdf" in prepared.columns:
+        print(f"Prepared PDF count: {prepared['pdf'].nunique()}")
+    print("Target null counts before fillna:")
+    print(raw[cols].isna().sum().to_string())
+    print("Prepared target columns sample:")
+    print(prepared[cols + ["pdf"]].head(args.samples).to_string(index=False))
+
+
+def cmd_gold_sanity(args: argparse.Namespace) -> None:
+    domain = args.domain.lower()
+    gold = load_gold(domain, args.gold_dir)
+    cols = extracted_columns(domain)
+    pred = gold[cols + ["pdf"]].copy()
+    metrics = evaluate_frames(domain, gold, pred)
+    print(metrics)
+    print(f"Macro-F1: {metrics['f1'].mean():.6f}")
+
+
+def _blank_record_for_domain(domain: str) -> dict[str, str]:
+    numeric = set(numeric_columns(domain))
+    return {col: "nan" if col in numeric else "NOT_DETECTED" for col in extracted_columns(domain)}
+
+
+def cmd_prior_pred(args: argparse.Namespace) -> None:
+    domain = args.domain.lower()
+    subset = article_subset(domain)
+    if subset:
+        pdfs = [item.lower() for item in subset]
+    else:
+        gold = load_gold(domain, args.gold_dir)
+        pdfs = sorted(gold["pdf"].astype(str).str.lower().unique())
+    rows = []
+    for pdf in pdfs:
+        for _ in range(args.rows_per_pdf):
+            row = _blank_record_for_domain(domain)
+            row["pdf"] = pdf
+            rows.append(row)
+    out = Path(args.out)
+    ensure_dir(out.parent)
+    pd.DataFrame(rows).reindex(columns=extracted_columns(domain) + ["pdf"]).to_csv(out, index=False)
+    print(f"Saved prior prediction CSV: {out}")
+    print(f"Rows: {len(rows)}; PDFs: {len(pdfs)}; rows_per_pdf: {args.rows_per_pdf}")
+
+
+def cmd_resolve_pdfs(args: argparse.Namespace) -> None:
+    domain = args.domain.lower()
+    gold = load_gold(domain, args.gold_dir)
+    pairs = (
+        gold[["pdf", "doi"]]
+        .drop_duplicates()
+        .sort_values("pdf")
+        .iloc[args.start : args.start + args.limit if args.limit else None]
+    )
+    reports = []
+    for idx, row in enumerate(pairs.itertuples(index=False), start=1):
+        report = resolve_one_pdf(str(row.doi), str(row.pdf), args.out_dir)
+        reports.append(report)
+        print(f"[{idx}/{len(pairs)}] {report['status']}: {report['pdf']}")
+        if args.sleep and idx < len(pairs):
+            time.sleep(args.sleep)
+    report_path = Path(args.report)
+    ensure_dir(report_path.parent)
+    write_json(report_path, reports)
+    counts = pd.Series([item["status"] for item in reports]).value_counts()
+    print("Status counts:")
+    print(counts.to_string())
+    print(f"Saved report: {report_path}")
+
+
 def cmd_llm_smoke(args: argparse.Namespace) -> None:
     settings = LLMSettings.from_env()
     if args.provider:
@@ -210,6 +314,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gold-dir", default="data/gold")
     p.add_argument("--out")
     p.set_defaults(func=cmd_evaluate)
+
+    p = sub.add_parser("cache-gold")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.set_defaults(func=cmd_cache_gold)
+
+    p = sub.add_parser("inspect-gold")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.add_argument("--samples", type=int, default=5)
+    p.set_defaults(func=cmd_inspect_gold)
+
+    p = sub.add_parser("gold-sanity")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.set_defaults(func=cmd_gold_sanity)
+
+    p = sub.add_parser("prior-pred")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.add_argument("--rows-per-pdf", type=int, default=1)
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_prior_pred)
+
+    p = sub.add_parser("resolve-pdfs")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.add_argument("--out-dir", default="data/pdfs")
+    p.add_argument("--report", default="data/cache/pdf_resolver_report.json")
+    p.add_argument("--start", type=int, default=0)
+    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--sleep", type=float, default=0.2)
+    p.set_defaults(func=cmd_resolve_pdfs)
 
     p = sub.add_parser("llm-smoke")
     p.add_argument("--provider", default="")

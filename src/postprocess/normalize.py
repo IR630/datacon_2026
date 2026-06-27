@@ -109,7 +109,7 @@ def validate_ranges(record: dict[str, Any]) -> list[str]:
     }
     for field, (low, high) in checks.items():
         value = record.get(field)
-        if value in (None, "NOT_DETECTED"):
+        if value in (None, "NOT_DETECTED") or str(value).strip().lower() == "nan":
             continue
         try:
             number = float(str(value).replace(",", "."))
@@ -121,4 +121,3 @@ def validate_ranges(record: dict[str, Any]) -> list[str]:
         if high is not None and number > high:
             warnings.append(f"{field}: above {high}")
     return warnings
-

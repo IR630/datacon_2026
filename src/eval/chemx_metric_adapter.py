@@ -13,6 +13,17 @@ import pandas as pd
 from src.baseline_bridge import article_subset, dataset_id, extracted_columns, numeric_columns
 
 
+def read_parquet(path: str | Path) -> pd.DataFrame:
+    try:
+        return pd.read_parquet(path)
+    except ImportError:
+        try:
+            import polars as pl
+        except Exception as exc:
+            raise ImportError("Reading parquet requires pyarrow/fastparquet or polars") from exc
+        return pd.DataFrame(pl.read_parquet(path).to_dicts())
+
+
 def convert_comma(value: object) -> str:
     try:
         return str(value).replace(",", ".")
@@ -26,7 +37,7 @@ def load_local_gold(domain: str, gold_dir: str | Path = "data/gold") -> pd.DataF
         path = base / f"{domain}{ext}"
         if path.exists():
             if ext == ".parquet":
-                return pd.read_parquet(path)
+                return read_parquet(path)
             return pd.read_csv(path)
     return None
 
@@ -64,15 +75,19 @@ def prepare_gold(domain: str, df: pd.DataFrame) -> pd.DataFrame:
 
 def prepare_pred(domain: str, pred_path: str | Path) -> pd.DataFrame:
     cols = extracted_columns(domain)
-    df = pd.read_csv(pred_path).fillna("NOT_DETECTED")
+    df = pd.read_csv(pred_path)
     missing = [col for col in cols + ["pdf"] if col not in df.columns]
     if missing:
         raise ValueError(f"Prediction is missing columns: {missing}")
-    df = df[cols + ["pdf"]].drop_duplicates()
+    df = df[cols + ["pdf"]].copy()
     df["pdf"] = df["pdf"].astype(str).str.lower()
+    numeric = set(numeric_columns(domain))
+    for col in cols:
+        fill_value = "nan" if col in numeric else "NOT_DETECTED"
+        df[col] = df[col].where(df[col].notna(), fill_value)
     for col in numeric_columns(domain):
         df[col] = df[col].apply(convert_comma)
-    return df
+    return df.drop_duplicates()
 
 
 def calc_column_metrics(true_values: list[str], pred_values: list[str]) -> dict[str, float]:
@@ -108,4 +123,3 @@ def evaluate_prediction_file(domain: str, pred_path: str | Path, gold_dir: str |
     gold = load_gold(domain, gold_dir)
     pred = prepare_pred(domain, pred_path)
     return evaluate_frames(domain, gold, pred)
-

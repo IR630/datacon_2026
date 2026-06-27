@@ -10,4 +10,4 @@ def test_selt_schema_columns():
 def test_blank_record_validates():
     record = SeltRecord(**blank_record())
     assert record.model_dump()["np"] == "NOT_DETECTED"
-
+    assert record.model_dump()["mic_np_µg_ml"] == "nan"

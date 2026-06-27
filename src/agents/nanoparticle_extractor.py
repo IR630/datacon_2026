@@ -13,10 +13,10 @@ class NanoparticleExtractorAgent:
         if "AgNP" in text or "silver nanoparticle" in text.lower():
             record["np"] = normalize_np("AgNPs")
         low, high, avg = parse_nm_range(text)
-        record["np_size_min_nm"] = low
-        record["np_size_max_nm"] = high
-        record["np_size_avg_nm"] = avg
+        if low != "NOT_DETECTED":
+            record["np_size_min_nm"] = low
+            record["np_size_max_nm"] = high
+            record["np_size_avg_nm"] = avg
         if "spherical" in text.lower():
             record["shape"] = "spherical"
         return record
-

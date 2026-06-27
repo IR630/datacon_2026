@@ -16,7 +16,7 @@ SELTOX_NUMERIC_COLUMNS = set(numeric_columns(DOMAIN))
 
 def _field_type(column: str) -> tuple[Any, Any]:
     if column in SELTOX_NUMERIC_COLUMNS:
-        return float | int | str, Field(default="NOT_DETECTED")
+        return float | int | str, Field(default="nan")
     return str, Field(default="NOT_DETECTED")
 
 
@@ -35,9 +35,8 @@ class SeltPrediction(BaseModel):
 
 
 def blank_record() -> dict[str, str]:
-    return {column: "NOT_DETECTED" for column in SELTOX_COLUMNS}
+    return {column: "nan" if column in SELTOX_NUMERIC_COLUMNS else "NOT_DETECTED" for column in SELTOX_COLUMNS}
 
 
 def csv_columns() -> list[str]:
     return SELTOX_COLUMNS + ["pdf"]
-
