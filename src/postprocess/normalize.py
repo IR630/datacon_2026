@@ -181,7 +181,25 @@ def norm_binary(value: Any) -> str:
 
 
 def norm_method(value: Any) -> str:
-    return "NOT_DETECTED" if _is_missing(value) else str(value).strip().upper()
+    """Map free-text assay names to the gold vocabulary {MIC, ZOI, MBC, MFC}.
+
+    The LLM emits phrasings like "Broth microdilution assay" or "Agar well
+    diffusion"; gold stores only the 4 canonical tokens. Mapping recovers true
+    ZOI/MBC rows that the MIC-only prior misses.
+    """
+    if _is_missing(value):
+        return "NOT_DETECTED"
+    text = str(value).strip()
+    low = text.lower()
+    if "mbc" in low or "bactericidal" in low:
+        return "MBC"
+    if "mfc" in low or "fungicidal" in low:
+        return "MFC"
+    if "mic" in low or "inhibitory" in low or "dilution" in low or "broth" in low:
+        return "MIC"
+    if "zoi" in low or "diffusion" in low or "inhibition zone" in low or "zone of inhibition" in low:
+        return "ZOI"
+    return text.upper()
 
 
 def norm_shape(value: Any) -> str:
