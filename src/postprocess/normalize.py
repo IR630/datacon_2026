@@ -181,11 +181,40 @@ def norm_binary(value: Any) -> str:
 
 
 def norm_method(value: Any) -> str:
-    return "NOT_DETECTED" if _is_missing(value) else str(value).strip().upper()
+    """Map free-text assay names to the gold vocabulary {MIC, ZOI, MBC, MFC}.
+
+    The LLM emits phrasings like "Broth microdilution assay" or "Agar well
+    diffusion"; gold stores only the 4 canonical tokens. Mapping recovers true
+    ZOI/MBC rows that the MIC-only prior misses.
+    """
+    if _is_missing(value):
+        return "NOT_DETECTED"
+    text = str(value).strip()
+    low = text.lower()
+    if "mbc" in low or "bactericidal" in low:
+        return "MBC"
+    if "mfc" in low or "fungicidal" in low:
+        return "MFC"
+    if "mic" in low or "inhibitory" in low or "dilution" in low or "broth" in low:
+        return "MIC"
+    if "zoi" in low or "diffusion" in low or "inhibition zone" in low or "zone of inhibition" in low:
+        return "ZOI"
+    return text.upper()
 
 
 def norm_shape(value: Any) -> str:
     return "NOT_DETECTED" if _is_missing(value) else str(value).strip().lower()
+
+
+def norm_precursor(value: Any) -> str:
+    """Gold precursor vocab is effectively {AgNO3, NOT_DETECTED}. Map silver
+    nitrate phrasings to AgNO3; non-silver/unknown precursors to NOT_DETECTED."""
+    if _is_missing(value):
+        return "NOT_DETECTED"
+    low = str(value).strip().lower()
+    if "agno3" in low or "silver nitrate" in low:
+        return "AgNO3"
+    return "NOT_DETECTED"
 
 
 def norm_np(value: Any) -> str:
@@ -217,7 +246,7 @@ SELTOX_FIELD_NORMALIZERS = {
     "solvent_for_extract": norm_text,
     "temperature_for_extract_C": norm_float_num,
     "duration_preparing_extract_min": norm_float_num,
-    "precursor_of_np": norm_text,
+    "precursor_of_np": norm_precursor,
     "concentration_of_precursor_mM": norm_float_num,
     "hydrodynamic_diameter_nm": norm_float_num,
     "ph_during_synthesis": norm_float_num,
