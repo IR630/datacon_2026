@@ -1,5 +1,7 @@
 # Deadline Runbook
 
+Full setup and launch instructions: `docs/run_everything.md`.
+
 ## Current Best Local Result
 
 - Domain: SelTox.
