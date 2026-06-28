@@ -7,9 +7,11 @@
 |---|---|
 | ChemX single-agent baseline | 0.0454 |
 | prior-only (floor, без LLM) | 0.1357 |
-| **prior + LLM (Qwen3.6-35B, Yandex)** | **0.1863** |
+| prior + LLM (Qwen3.6-35B, Yandex) | 0.1863 |
+| + маппинг `method` → {MIC,ZOI,MBC,MFC} | 0.1887 |
+| **+ маппинг `precursor` → {AgNO3,NOT_DETECTED}** | **0.1921** |
 
-×4 к baseline. Коммит: `0b1d7d2` (ветка `alisa`).
+×4.2 к baseline. Ветка `alisa`.
 
 Воспроизведение:
 ```powershell
