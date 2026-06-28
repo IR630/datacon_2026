@@ -17,7 +17,16 @@ from src.agents.synthesis_extractor import SynthesisExtractorAgent
 from src.agents.validator import ValidatorAgent
 from src.baseline_bridge import article_subset, dataset_id, extracted_columns, numeric_columns, schema_path
 from src.data.pdf_resolver import resolve_one_pdf
-from src.eval.chemx_metric_adapter import evaluate_frames, evaluate_prediction_file, load_gold, load_local_gold, prepare_gold
+from src.eval.chemx_metric_adapter import (
+    diff_to_reference,
+    evaluate_frames,
+    evaluate_prediction_file,
+    load_gold,
+    load_local_gold,
+    load_reference_metrics,
+    prepare_gold,
+    reproduce_single_agent_metrics,
+)
 from src.parse.ensemble import parse_pdf
 from src.postprocess.deduplicate import deduplicate_records
 from src.postprocess.link_records import merge_article_level_records
@@ -141,6 +150,45 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
         ensure_dir(out.parent)
         metrics.to_csv(out)
         print(f"Saved metrics: {out}")
+
+
+def cmd_validate_evaluator(args: argparse.Namespace) -> None:
+    domain = args.domain.lower()
+    if args.pred:
+        pred_df = pd.read_csv(args.pred)
+    else:
+        from src.data.single_agent import fetch_single_agent_pred
+
+        pred_df = fetch_single_agent_pred(domain)
+    reference = load_reference_metrics(domain)
+
+    best: tuple[str, float, pd.DataFrame] | None = None
+    for lowercase in (False, True):
+        label = "lowercase-articles" if lowercase else "articles-as-is"
+        ours = reproduce_single_agent_metrics(domain, args.gold_dir, pred=pred_df, lowercase_articles=lowercase)
+        max_diff = float(diff_to_reference(ours, reference).to_numpy().max())
+        print(
+            f"[{label}] max|Δ| vs reference = {max_diff:.3e} | "
+            f"ours Macro-F1 = {ours['f1'].mean():.6f} | ref Macro-F1 = {reference['f1'].mean():.6f}"
+        )
+        if best is None or max_diff < best[1]:
+            best = (label, max_diff, ours)
+
+    assert best is not None
+    label, max_diff, ours = best
+    passed = max_diff <= args.tol
+    print(f"\nBest match: {label} (max|Δ| = {max_diff:.3e}); tol = {args.tol:.1e} -> {'PASS' if passed else 'FAIL'}")
+    print("\nPer-field f1 (ours vs reference):")
+    table = pd.DataFrame({"ours_f1": ours["f1"], "ref_f1": reference["f1"]})
+    table["abs_diff"] = (table["ours_f1"] - table["ref_f1"]).abs()
+    print(table.to_string())
+    if args.out:
+        out = Path(args.out)
+        ensure_dir(out.parent)
+        ours.to_csv(out)
+        print(f"\nSaved reproduced metrics: {out}")
+    if not passed:
+        raise SystemExit("Evaluator does NOT reproduce the published numbers; do not trust it yet.")
 
 
 def cmd_cache_gold(args: argparse.Namespace) -> None:
@@ -318,6 +366,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gold-dir", default="data/gold")
     p.add_argument("--out")
     p.set_defaults(func=cmd_evaluate)
+
+    p = sub.add_parser("validate-evaluator")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.add_argument("--pred", help="local single-agent pred.csv (skip download); defaults to fetch+cache")
+    p.add_argument("--tol", type=float, default=1e-6)
+    p.add_argument("--out")
+    p.set_defaults(func=cmd_validate_evaluator)
 
     p = sub.add_parser("cache-gold")
     p.add_argument("--domain", default="seltox")

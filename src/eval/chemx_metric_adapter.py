@@ -10,7 +10,14 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.baseline_bridge import article_subset, dataset_id, extracted_columns, numeric_columns
+from src.baseline_bridge import (
+    appends_pdf_suffix,
+    article_subset,
+    dataset_id,
+    extracted_columns,
+    numeric_columns,
+    reference_metrics_path,
+)
 
 
 def read_parquet(path: str | Path) -> pd.DataFrame:
@@ -42,10 +49,10 @@ def load_local_gold(domain: str, gold_dir: str | Path = "data/gold") -> pd.DataF
     return None
 
 
-def load_gold(domain: str, gold_dir: str | Path = "data/gold") -> pd.DataFrame:
+def load_gold(domain: str, gold_dir: str | Path = "data/gold", apply_subset: bool = True) -> pd.DataFrame:
     local = load_local_gold(domain, gold_dir)
     if local is not None:
-        return prepare_gold(domain, local)
+        return prepare_gold(domain, local, apply_subset=apply_subset)
     try:
         from datasets import load_dataset
     except Exception as exc:
@@ -53,10 +60,10 @@ def load_gold(domain: str, gold_dir: str | Path = "data/gold") -> pd.DataFrame:
             f"No local gold found in {gold_dir}. Put {domain}.csv/parquet there or install datasets."
         ) from exc
     ds = load_dataset(dataset_id(domain))
-    return prepare_gold(domain, ds["train"].to_pandas())
+    return prepare_gold(domain, ds["train"].to_pandas(), apply_subset=apply_subset)
 
 
-def prepare_gold(domain: str, df: pd.DataFrame) -> pd.DataFrame:
+def prepare_gold(domain: str, df: pd.DataFrame, apply_subset: bool = True) -> pd.DataFrame:
     out = df.copy()
     for col in numeric_columns(domain):
         if col in out.columns:
@@ -66,11 +73,25 @@ def prepare_gold(domain: str, df: pd.DataFrame) -> pd.DataFrame:
         out = out.loc[out["access"] == 1].copy()
     if "pdf" in out.columns:
         out["pdf"] = out["pdf"].astype(str).str.lower()
-    subset = article_subset(domain)
-    if subset:
-        subset_lower = {item.lower() for item in subset}
-        out = out.loc[out["pdf"].isin(subset_lower)].copy()
+    if apply_subset:
+        subset = article_subset(domain)
+        if subset:
+            subset_lower = {item.lower() for item in subset}
+            out = out.loc[out["pdf"].isin(subset_lower)].copy()
     return out
+
+
+def prepare_single_agent_pred(domain: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Mirror baseline ``prepare_result(source='single_agent')`` exactly.
+
+    Appends ``.pdf`` for the suffix domains, lower-cases ``pdf``, drops duplicates.
+    Deliberately does NOT convert commas or fill NaNs (the baseline does not either).
+    """
+    out = df.copy()
+    if appends_pdf_suffix(domain):
+        out["pdf"] = out["pdf"].astype(str) + ".pdf"
+    out["pdf"] = out["pdf"].astype(str).str.lower()
+    return out.drop_duplicates()
 
 
 def prepare_pred(domain: str, pred_path: str | Path) -> pd.DataFrame:
@@ -102,10 +123,16 @@ def calc_column_metrics(true_values: list[str], pred_values: list[str]) -> dict[
     return {"tp": tp, "fp": fp, "fn": fn, "precision": precision, "recall": recall, "f1": f1}
 
 
-def evaluate_frames(domain: str, gold: pd.DataFrame, pred: pd.DataFrame) -> pd.DataFrame:
+def evaluate_frames(
+    domain: str,
+    gold: pd.DataFrame,
+    pred: pd.DataFrame,
+    articles: list[str] | None = None,
+) -> pd.DataFrame:
     cols = extracted_columns(domain)
     metrics = {col: {"tp": 0.0, "fp": 0.0, "fn": 0.0, "precision": 0.0, "recall": 0.0, "f1": 0.0} for col in cols}
-    articles = sorted(set(gold["pdf"].astype(str).str.lower()))
+    if articles is None:
+        articles = sorted(set(gold["pdf"].astype(str).str.lower()))
     if not articles:
         raise ValueError("Gold contains no articles after filtering.")
     for article in articles:
@@ -123,3 +150,41 @@ def evaluate_prediction_file(domain: str, pred_path: str | Path, gold_dir: str |
     gold = load_gold(domain, gold_dir)
     pred = prepare_pred(domain, pred_path)
     return evaluate_frames(domain, gold, pred)
+
+
+METRIC_COLUMNS = ["tp", "fp", "fn", "precision", "recall", "f1"]
+
+
+def load_reference_metrics(domain: str, source: str = "single_agent") -> pd.DataFrame:
+    return pd.read_csv(reference_metrics_path(domain, source), index_col=0)
+
+
+def reproduce_single_agent_metrics(
+    domain: str,
+    gold_dir: str | Path = "data/gold",
+    pred: pd.DataFrame | None = None,
+    lowercase_articles: bool = False,
+) -> pd.DataFrame:
+    """Recompute the published single-agent metrics with our evaluator (1:1 with baseline).
+
+    ``lowercase_articles=False`` mirrors the baseline literally (it iterates the article
+    subset as-is from ``np.load`` while gold/pred ``pdf`` are lower-cased). The validate
+    command tries both so we learn which one matches the published numbers.
+    """
+    gold = load_gold(domain, gold_dir, apply_subset=False)
+    if pred is None:
+        from src.data.single_agent import fetch_single_agent_pred
+
+        pred = fetch_single_agent_pred(domain)
+    pred = prepare_single_agent_pred(domain, pred)
+    subset = article_subset(domain)
+    if subset:
+        articles = [item.lower() for item in subset] if lowercase_articles else list(subset)
+    else:
+        articles = sorted(set(gold["pdf"].astype(str).str.lower()))
+    return evaluate_frames(domain, gold, pred, articles=articles)
+
+
+def diff_to_reference(ours: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFrame:
+    common = [idx for idx in ours.index if idx in reference.index]
+    return (ours.loc[common, METRIC_COLUMNS] - reference.loc[common, METRIC_COLUMNS]).abs()

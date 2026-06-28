@@ -14,6 +14,11 @@ CONSTANTS_PATH = ROOT / "baseline" / "src" / "constants.py"
 SCHEMAS_DIR = ROOT / "baseline" / "data" / "schemas"
 REFERENCE_METRICS_DIR = ROOT / "baseline" / "reference_metrics"
 
+# Where the published single-agent predictions live (reachable when GitHub is open).
+SINGLE_AGENT_BASE = "https://raw.githubusercontent.com/ai-chem/ChemX/main/LLM/result/from_single_agent"
+# Domains where the baseline appends ".pdf" to the prediction's pdf column (prepare_result).
+PDF_SUFFIX_DOMAINS = frozenset({"cytotoxicity", "seltox", "synergy", "magnetic"})
+
 
 @lru_cache(maxsize=1)
 def constants() -> ModuleType:
@@ -55,4 +60,16 @@ def article_subset(domain: str) -> list[str] | None:
 
 def schema_path(domain: str) -> Path:
     return SCHEMAS_DIR / f"{domain}.json"
+
+
+def single_agent_pred_url(domain: str) -> str:
+    return f"{SINGLE_AGENT_BASE}/{domain}/pred.csv"
+
+
+def appends_pdf_suffix(domain: str) -> bool:
+    return domain in PDF_SUFFIX_DOMAINS
+
+
+def reference_metrics_path(domain: str, source: str = "single_agent") -> Path:
+    return REFERENCE_METRICS_DIR / f"metrics_{domain}_from_{source}.csv"
 
