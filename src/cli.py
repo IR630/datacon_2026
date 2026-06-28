@@ -246,7 +246,7 @@ def cmd_build_submission(args: argparse.Namespace) -> None:
     """Assemble a ChemX submission: one calibrated prior row per target PDF + extracted rows.
 
     The prior locks the abstention/majority-class floor; extracted rows add true positives.
-    Keeping both is what beats extraction-only (see docs/progress.md).
+    Keeping both is what beats extraction-only.
     """
     domain = args.domain.lower()
     if domain != "seltox":

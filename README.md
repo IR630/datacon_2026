@@ -29,8 +29,6 @@ OpenAI-compatible endpoint/model/key; Yandex AI Studio можно подключ
 `YANDEX_FOLDER_ID`, `OPENAI_BASE_URL`, `LLM_MODEL`. Короткая инструкция по выбору модели и smoke-run:
 [`docs/yandex_ai_studio.md`](./docs/yandex_ai_studio.md).
 
-Подробный рабочий план лежит в [`plan.md`](./plan.md).
-
 ## Baseline (single-agent)
 
 В каталоге [`baseline/`](./baseline) лежит перенесённый single-agent бейзлайн из
