@@ -31,6 +31,7 @@ from src.eval.chemx_metric_adapter import (
 from src.parse.ensemble import parse_pdf
 from src.postprocess.deduplicate import deduplicate_records
 from src.postprocess.link_records import merge_article_level_records
+from src.postprocess.normalize import normalize_seltox_record
 from src.retrieve.evidence_finder import find_evidence
 from src.schemas.selt import SELTOX_COLUMNS
 from src.utils.io import ensure_dir, write_json
@@ -190,6 +191,47 @@ def cmd_validate_evaluator(args: argparse.Namespace) -> None:
         print(f"\nSaved reproduced metrics: {out}")
     if not passed:
         raise SystemExit("Evaluator does NOT reproduce the published numbers; do not trust it yet.")
+
+
+def cmd_inspect_gt_format(args: argparse.Namespace) -> None:
+    """Show the exact stored format of every gold field, to calibrate normalizers against."""
+    domain = args.domain.lower()
+    raw = load_local_gold(domain, args.gold_dir)
+    if raw is None:
+        raise SystemExit(f"No local gold found in {args.gold_dir}; run cache-gold first.")
+    prepared = prepare_gold(domain, raw, apply_subset=False)
+    cols = extracted_columns(domain)
+    numeric = set(numeric_columns(domain))
+    for col in cols:
+        tag = " [numeric]" if col in numeric else ""
+        raw_dtype = str(raw[col].dtype) if col in raw.columns else "ABSENT"
+        pct_nan = (raw[col].isna().mean() * 100) if col in raw.columns else float("nan")
+        counts = prepared[col].astype(str).value_counts()
+        print(f"\n=== {col}{tag} | raw_dtype={raw_dtype} | %nan={pct_nan:.0f} | n_unique={counts.size} ===")
+        for value, count in counts.head(args.top).items():
+            print(f"  {count:>5}  {value!r}")
+        if col in numeric:
+            sample = [v for v in prepared[col].astype(str) if v not in ("nan", "NOT_DETECTED")][:8]
+            print(f"  non-missing sample: {sample}")
+
+
+def cmd_verify_normalizers(args: argparse.Namespace) -> None:
+    """Idempotency check: applying our normalizers to gold should leave it unchanged (F1 ~ 1.0)."""
+    domain = args.domain.lower()
+    if domain != "seltox":
+        raise SystemExit("verify-normalizers is calibrated for seltox only")
+    gold = load_gold(domain, args.gold_dir)
+    cols = extracted_columns(domain)
+    normalized = pd.DataFrame([normalize_seltox_record(row) for row in gold[cols].to_dict("records")])
+    normalized["pdf"] = gold["pdf"].to_numpy()
+    metrics = evaluate_frames(domain, gold, normalized)
+    print(f"Idempotency Macro-F1 (normalized-gold vs gold): {metrics['f1'].mean():.6f}")
+    imperfect = metrics.loc[metrics["f1"] < 1.0 - 1e-9, ["f1"]].sort_values("f1")
+    if imperfect.empty:
+        print("All 23 fields perfectly idempotent (F1 = 1.0).")
+    else:
+        print("Fields where normalization perturbs gold (expected: only deliberate case/typo folding):")
+        print(imperfect.to_string())
 
 
 def cmd_cache_gold(args: argparse.Namespace) -> None:
@@ -375,6 +417,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tol", type=float, default=1e-6)
     p.add_argument("--out")
     p.set_defaults(func=cmd_validate_evaluator)
+
+    p = sub.add_parser("inspect-gt-format")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.add_argument("--top", type=int, default=12)
+    p.set_defaults(func=cmd_inspect_gt_format)
+
+    p = sub.add_parser("verify-normalizers")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--gold-dir", default="data/gold")
+    p.set_defaults(func=cmd_verify_normalizers)
 
     p = sub.add_parser("cache-gold")
     p.add_argument("--domain", default="seltox")
