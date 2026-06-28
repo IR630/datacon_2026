@@ -1,0 +1,78 @@
+domain: seltox
+display_name: SelTox
+baseline_macro_f1: 0.045
+
+paths:
+  parsed_dir: data/parsed
+  predictions_dir: data/predictions
+  gold_dir: data/gold
+
+llm:
+  provider: ${LLM_PROVIDER}
+  model: ${LLM_MODEL}
+  base_url: ${OPENAI_BASE_URL}
+  temperature: ${LLM_TEMPERATURE}
+
+evidence:
+  top_k: 12
+  activity_keywords:
+    - MIC
+    - MBC
+    - ZOI
+    - zone of inhibition
+    - inhibition zone
+    - antibacterial
+    - antimicrobial
+    - bacteria
+    - bacterial strain
+    - multidrug-resistant
+    - MDR
+    - ATCC
+    - Escherichia coli
+    - E. coli
+    - Staphylococcus aureus
+    - S. aureus
+    - Pseudomonas aeruginosa
+    - P. aeruginosa
+    - Klebsiella pneumoniae
+    - K. pneumoniae
+    - Bacillus subtilis
+    - B. subtilis
+    - Enterococcus faecalis
+    - E. faecalis
+  nanoparticle_keywords:
+    - AgNP
+    - Ag NPs
+    - silver nanoparticle
+    - silver nanoparticles
+    - nanoparticle
+    - nanoparticles
+    - ZnO
+    - AuNP
+    - CuO
+    - TiO2
+    - particle size
+    - size
+    - TEM
+    - SEM
+    - DLS
+    - zeta
+    - zeta potential
+    - hydrodynamic diameter
+    - shape
+    - spherical
+  synthesis_keywords:
+    - green synthesis
+    - chemical synthesis
+    - biological synthesis
+    - plant extract
+    - extract
+    - precursor
+    - AgNO3
+    - silver nitrate
+    - pH
+    - temperature
+    - stirring
+    - duration
+    - solvent
+    - concentration

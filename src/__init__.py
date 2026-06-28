@@ -1,0 +1,2 @@
+"""SelTox-MAX extraction skeleton."""
+
