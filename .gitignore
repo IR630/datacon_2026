@@ -216,3 +216,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# DataCon local artifacts
+api.txt
+data/cache/*
+data/gold/*
+data/parsed/*
+data/pdfs/*
+data/predictions/*
+data/uploads/*
+!data/cache/.gitkeep
+!data/gold/.gitkeep
+!data/parsed/.gitkeep
+!data/pdfs/.gitkeep
+!data/predictions/.gitkeep
+!data/uploads/.gitkeep

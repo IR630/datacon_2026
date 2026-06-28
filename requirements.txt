@@ -1,0 +1,18 @@
+pandas>=2.2
+polars>=1.0
+pydantic>=2.7
+pypdf>=5.0
+pyyaml>=6.0
+requests>=2.32
+streamlit>=1.36
+pytest>=8.0
+
+# Optional but recommended for better PDF parsing.
+pdfplumber>=0.11
+pymupdf>=1.24
+camelot-py>=0.11
+
+# Optional providers / data access.
+openai>=1.40
+huggingface_hub>=0.24
+datasets>=2.20
