@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -168,7 +169,7 @@ def cmd_validate_evaluator(args: argparse.Namespace) -> None:
         ours = reproduce_single_agent_metrics(domain, args.gold_dir, pred=pred_df, lowercase_articles=lowercase)
         max_diff = float(diff_to_reference(ours, reference).to_numpy().max())
         print(
-            f"[{label}] max|Δ| vs reference = {max_diff:.3e} | "
+            f"[{label}] max abs diff vs reference = {max_diff:.3e} | "
             f"ours Macro-F1 = {ours['f1'].mean():.6f} | ref Macro-F1 = {reference['f1'].mean():.6f}"
         )
         if best is None or max_diff < best[1]:
@@ -177,7 +178,7 @@ def cmd_validate_evaluator(args: argparse.Namespace) -> None:
     assert best is not None
     label, max_diff, ours = best
     passed = max_diff <= args.tol
-    print(f"\nBest match: {label} (max|Δ| = {max_diff:.3e}); tol = {args.tol:.1e} -> {'PASS' if passed else 'FAIL'}")
+    print(f"\nBest match: {label} (max abs diff = {max_diff:.3e}); tol = {args.tol:.1e} -> {'PASS' if passed else 'FAIL'}")
     print("\nPer-field f1 (ours vs reference):")
     table = pd.DataFrame({"ours_f1": ours["f1"], "ref_f1": reference["f1"]})
     table["abs_diff"] = (table["ours_f1"] - table["ref_f1"]).abs()
@@ -425,6 +426,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # Windows consoles default to a legacy code page (e.g. cp1251) that cannot encode
+    # field names like "mic_np_µg_ml"; force utf-8 so output never crashes.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     parser = build_parser()
     args = parser.parse_args()
     args.func(args)
