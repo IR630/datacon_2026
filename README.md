@@ -1,62 +1,127 @@
-# datacon_2026
+# DataCon 2026 — ChemX SelTox
 
-Решение финальной задачи **DataCon'26** — автоматическая экстракция химических данных из
-научных PDF на основе бенчмарка [ChemX](https://github.com/ai-chem/ChemX) (NeurIPS 2025).
-Описание задачи: репозиторий `DataCon26`.
+Система автоматической экстракции химических данных из научных PDF для бенчмарка
+[ChemX](https://github.com/ai-chem/ChemX) (NeurIPS 2025). Домен — **SelTox**
+(антимикробная активность и токсичность наночастиц серебра).
 
-## SelTox-MAX MVP
+## Результат
 
-Текущий рабочий трек — **SelTox-MAX**, table-first каркас для домена SelTox
-(`Macro-F1` baseline: `0.045`). Пока LLM-слой отключён по умолчанию: parser, evidence finder,
-normalizer, CSV adapter и metric adapter можно проверять без API-ключа.
+На домене SelTox мы превосходим опубликованный single-agent baseline ChemX в **4.2 раза**.
 
-Быстрые команды:
+| Сабмишен | Macro-F1 |
+|---|:---:|
+| ChemX single-agent baseline | 0.0454 |
+| Калиброванный prior (без LLM) | 0.1357 |
+| + LLM-экстракция (Qwen3.6-35B) | 0.1863 |
+| + нормализация под формат gold | **0.1921** |
+
+Метрика — ChemX exact-string multiset Macro-F1 по 23 целевым полям. Подробности и
+команды воспроизведения: [`docs/seltox_score.md`](./docs/seltox_score.md).
+
+## Подход
+
+Один проход на статью, table-faithful, abstention-first:
+
+```
+PDF (+ supplementary)
+  |
+  v  1. Parse      текст и таблицы -> markdown, страницы -> PNG
+  v  2. Context    весь документ в контекст (262k токенов), без BM25
+  v  3. Extract    один schema-driven вызов LLM -> одна строка на (бактерия x наночастица)
+  v  4. Normalize  приведение к точному формату gold (per-field)
+  v  5. Submission  prior(65 статей) + извлечённые строки
+  v  6. Evaluate    доверенный ChemX-evaluator
+```
+
+Три идеи, каждая измеримо двигает метрику:
+
+1. **Калиброванный prior.** Мажоритарные дефолты по полям без пропусков
+   (`np=Ag`, `method=MIC`, `precursor=AgNO3`, ...) дают floor `0.1357` — уже ×3 к baseline
+   без единого вызова LLM.
+2. **Mono-agent LLM-экстракция.** Весь документ -> `Qwen3.6-35B` (Yandex AI Studio,
+   OpenAI-совместимый API) -> `{samples: [...]}`. Abstention-first: нет в тексте -> `null`,
+   не выдумываем. Поднимает до `0.1863`.
+3. **Нормализация под gold.** Свободный текст LLM приводится к словарю gold
+   (`method -> {MIC, ZOI, MBC, MFC}`, `precursor -> {AgNO3, NOT_DETECTED}`), что возвращает
+   истинные ZOI/MBC, пропущенные prior'ом. Итог `0.1921`.
+
+## Быстрый старт
 
 ```bash
-python -m src.cli inspect-selt
-python -m src.cli parse --pdf path/to/article.pdf
-python -m src.cli evidence --pdf path/to/article.pdf --domain SelTox
-python -m src.cli extract --pdf path/to/article.pdf --domain SelTox --out data/predictions/article_selt.csv
-python -m src.cli batch-extract --pdf-dir data/pdfs --domain SelTox --out data/predictions/selt_predictions.csv
-python -m src.cli evaluate --pred data/predictions/selt_predictions.csv --domain seltox
-python -m src.cli llm-smoke --dry-run
+# 1. Зависимости
+python -m pip install -r requirements.txt
+
+# 2. Ключ LLM: скопировать .env.example -> .env и заполнить
+#    LLM_PROVIDER=yandex, YANDEX_API_KEY, YANDEX_FOLDER_ID,
+#    LLM_MODEL=qwen3.6-35b-a3b/latest
+cp .env.example .env
+
+# 3. Локальный кэш gold (Hugging Face ai-chem/SelTox)
+python -m src.cli cache-gold --domain seltox
+
+# 4. Воспроизведение результата
+python -m src.cli llm-extract --pdf-dir data/pdfs --out data/predictions/extracted.csv
+python -m src.cli build-submission --domain seltox \
+  --extracted data/predictions/extracted.csv \
+  --out data/predictions/submission.csv
+python -m src.cli evaluate --domain seltox --pred data/predictions/submission.csv
+```
+
+Полный пошаговый runbook (включая загрузку PDF и настройку Yandex): см.
+[`docs/run_everything.md`](./docs/run_everything.md).
+
+## Веб-интерфейс
+
+```bash
 streamlit run app.py
 ```
 
-Для оценки положите официальный gold cache в `data/gold/seltox.csv` или
-`data/gold/seltox.parquet`. Для LLM-провайдера скопируйте `.env.example` в `.env` и заполните
-OpenAI-compatible endpoint/model/key; Yandex AI Studio можно подключить через `YANDEX_API_KEY`,
-`YANDEX_FOLDER_ID`, `OPENAI_BASE_URL`, `LLM_MODEL`. Короткая инструкция по выбору модели и smoke-run:
-[`docs/yandex_ai_studio.md`](./docs/yandex_ai_studio.md).
+Загрузка PDF -> парсинг -> экстракция -> таблица извлечённых полей с указанием источника
+и выгрузкой в CSV.
 
-## Baseline (single-agent)
+## Презентация
 
-В каталоге [`baseline/`](./baseline) лежит перенесённый single-agent бейзлайн из
-[ai-chem/ChemX](https://github.com/ai-chem/ChemX) (`LLM/`) — отправная точка, которую
-нужно превзойти. Пайплайн: `merge_suppl` → `pdf_to_images` → `pdf_extraction` /
-`images_extraction` → `metric_calc`. Инструкция по запуску — в
-[`baseline/README.md`](./baseline/README.md).
+[`presentation.html`](./presentation.html) — слайды Reveal.js (открываются в браузере).
 
-Опубликованные метрики single-agent (эталон сравнения; подробные Precision/Recall/F1 по
-полям — в [`baseline/reference_metrics/`](./baseline/reference_metrics)):
+## Структура репозитория
 
-| Домен | Направление | Macro-F1 (single-agent) |
-|---|---|:---:|
-| Benzimidazoles | Малые молекулы | 0.217 |
-| Oxazolidinones | Малые молекулы | 0.491 |
-| Co-crystals | Малые молекулы | 0.296 |
-| Complexes | Малые молекулы | 0.290 |
-| Eye Drops | Малые молекулы | — |
-| Nanozymes | Наноматериалы | 0.164 |
-| Synergy | Наноматериалы | 0.080 |
-| Nanomag | Наноматериалы | 0.034 |
-| Cytotox | Наноматериалы | 0.182 |
-| SelTox | Наноматериалы | 0.045 |
+```
+src/
+  agents/          экстракторы (seltox_extractor — основной schema-driven вызов LLM) + LLM-клиент
+  parse/           парсинг PDF (текст, таблицы, изображения страниц)
+  postprocess/     нормализаторы под формат gold + калиброванный prior
+  eval/            доверенный ChemX metric adapter
+  data/            резолвер PDF (Europe PMC / Unpaywall / OpenAlex / Crossref)
+  cli.py           все команды пайплайна
+baseline/          перенесённый single-agent baseline ChemX (эталон сравнения)
+configs/           конфигурация домена
+tests/             unit-тесты (pytest)
+docs/              методология, формат gold, настройка LLM, runbook, итоговые метрики
+app.py             веб-интерфейс (Streamlit)
+```
 
-> Цель — превзойти метрики single-agent хотя бы на одном домене.
+## Тесты и CI
+
+```bash
+python -m pytest -q
+```
+
+CI (GitHub Actions, [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)) прогоняет тесты
+на каждый PR. Процесс ведения репозитория — GitHub Flow, см.
+[`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
+## Документация
+
+| Файл | О чём |
+|---|---|
+| [`docs/seltox_score.md`](./docs/seltox_score.md) | Итоговые метрики и воспроизведение |
+| [`docs/run_everything.md`](./docs/run_everything.md) | Полный runbook запуска |
+| [`docs/yandex_ai_studio.md`](./docs/yandex_ai_studio.md) | Настройка LLM (Yandex AI Studio) |
+| [`docs/model_strategy.md`](./docs/model_strategy.md) | Обоснование выбора модели |
+| [`docs/gt_format.md`](./docs/gt_format.md) | Измеренный формат gold (калибровка нормализаторов) |
 
 ## Ссылки
 
 - Датасеты ChemX: https://huggingface.co/collections/ai-chem/chemx
-- Код бенчмарка и бейзлайнов: https://github.com/ai-chem/ChemX
+- Код бенчмарка: https://github.com/ai-chem/ChemX
 - Статья ChemX (NeurIPS 2025): https://proceedings.neurips.cc/paper_files/paper/2025/file/9e08a1db869a9646418e3371b24c6ae6-Paper-Datasets_and_Benchmarks_Track.pdf
