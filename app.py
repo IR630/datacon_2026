@@ -199,7 +199,7 @@ with pdf_tab:
                     out = PRED_DIR / f"{pdf_path.stem}_llm.csv"
                     df.to_csv(out, index=False)
                     st.success(f"{len(df)} rows extracted")
-                    st.dataframe(df, width="stretch")
+                    st.dataframe(df.dropna(axis=1, how="all"), width="stretch")
                     download_csv(out, "Download CSV")
                 else:
                     st.info("No rows extracted for this PDF.")
