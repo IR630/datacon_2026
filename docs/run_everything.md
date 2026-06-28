@@ -1,125 +1,82 @@
 # Как Запустить Все
 
-Этот файл описывает быстрый рабочий запуск SelTox-MAX: зависимости, Yandex AI Studio, датасет, submission, метрика и Streamlit UI.
+Быстрый рабочий запуск SelTox-MAX: зависимости, Yandex AI Studio, PDF, LLM extraction, submission, метрика и Streamlit UI.
 
-## 1. Подготовить Окружение
+## 1. Зависимости
 
 ```bash
 python -m pip install -r requirements.txt
-```
-
-Если нужно быстро проверить, что зависимости на месте:
-
-```bash
 python -m pytest -q
 python -m compileall src app.py
 ```
 
-## 2. Настроить LLM
+## 2. `.env`
 
-Скопируйте `.env.example` в `.env` и заполните только локальный `.env`.
+Скопируйте `.env.example` в `.env` и заполните локальный файл. `.env`, `api.txt` и `data/*` уже ignored, их нельзя коммитить.
 
 ```text
 LLM_PROVIDER=yandex
 YANDEX_API_KEY=<your-yandex-api-key>
 YANDEX_FOLDER_ID=<your-folder-id>
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=qwen3.6-35b-a3b/latest
 OPENAI_BASE_URL=https://ai.api.cloud.yandex.net/v1
 LLM_TEMPERATURE=0
 LLM_MAX_OUTPUT_TOKENS=16384
 ```
 
-`api.txt`, `.env` и `data/*` уже игнорируются git. Не коммитьте ключи и скачанные данные.
+Текущий лучший default для финального `llm-extract`: `qwen3.6-35b-a3b/latest`.
 
-### Лучшие Модели Сейчас
+Для дешевого smoke/debug можно временно использовать `deepseek-v4-flash`. `gpt-oss-120b` и `gpt-oss-20b` пока не ставим default: на коротких проверках они тратили tokens и не возвращали полезный финальный текст.
 
-Основной default:
-
-```text
-LLM_MODEL=deepseek-v4-flash
-```
-
-Почему: стабильно возвращает текст в нашем OpenAI-compatible wrapper, прошел smoke-test, подходит для длинных evidence chunks.
-
-Дешевый debug:
-
-```text
-LLM_MODEL=aliceai-llm-flash
-```
-
-Второй кандидат для ручного сравнения качества:
-
-```text
-LLM_MODEL=qwen3-235b-a22b-fp8
-```
-
-Пока не ставить default:
-
-```text
-LLM_MODEL=qwen3.6-35b-a3b/latest
-LLM_MODEL=gpt-oss-120b
-LLM_MODEL=gpt-oss-20b
-```
-
-Эти модели доступны, но в текущем wrapper на коротких smoke-тестах тратили output tokens и возвращали пустой финальный текст. `qwen3.6-35b-a3b` интересна для будущего image/table path, потому что AI Studio docs описывают поддержку изображений через Base64, но для нее нужен отдельный adapter.
-
-Проверка конфига без сетевого запроса:
+Проверить конфиг без сетевого запроса:
 
 ```bash
 python -m src.cli llm-smoke --dry-run
 ```
 
-Проверка реального запроса:
+Проверить реальный LLM-запрос:
 
 ```bash
-python -m src.cli llm-smoke --max-output-tokens 32 --prompt "Return exactly OK."
+python -m src.cli llm-smoke --max-output-tokens 1024 --prompt "Return exactly OK."
 ```
 
-## 3. Скачать Gold И PDF
+## 3. Gold И PDF
 
-Если `data/gold/seltox.parquet` уже есть, этот шаг можно пропустить.
+Если `data/gold/seltox.parquet` уже есть, gold скачивать не нужно.
 
 ```bash
 python -m src.cli cache-gold --domain seltox
 ```
 
-Докачать open-access PDF для 65 target articles:
+Пройти resolver по 65 target articles:
 
 ```bash
 python -m src.cli resolve-pdfs --domain seltox --start 0 --limit 65 --sleep 0.05 --out-dir data/pdfs --report data/cache/pdf_resolver_report_deadline.json
 ```
 
-Resolver не гарантирует 65/65 PDF: часть статей закрыта или не отдает прямой PDF. На текущем локальном прогоне было 12 PDF.
+Нормально, если скачались не все 65 PDF. На текущем локальном прогоне было 12 PDF; submission все равно покрывает 65 статей через prior rows.
 
-## 4. Собрать Submission
+## 4. Лучший Submission
 
-Batch extraction по доступным PDF:
-
-```bash
-python -m src.cli batch-extract --pdf-dir data/pdfs --domain SelTox --out data/predictions/selt_batch_resolved.csv --work-dir data/predictions/per_pdf --parsed-dir data/parsed --top-k 8
-```
-
-Собрать итоговый ChemX submission:
+Основной финальный путь сейчас:
 
 ```bash
-python -m src.cli build-submission --domain seltox --extracted data/predictions/selt_batch_resolved.csv --out data/predictions/seltox_submission_resolved.csv
+python -m src.cli llm-extract --pdf-dir data/pdfs --out data/predictions/extracted.csv
+python -m src.cli build-submission --domain seltox --extracted data/predictions/extracted.csv --out data/predictions/seltox_submission_llm.csv
+python -m src.cli evaluate --domain seltox --pred data/predictions/seltox_submission_llm.csv --out data/predictions/seltox_submission_llm_metrics.csv
 ```
 
-Посчитать локальную метрику:
-
-```bash
-python -m src.cli evaluate --domain seltox --pred data/predictions/seltox_submission_resolved.csv --out data/predictions/seltox_submission_resolved_metrics.csv
-```
-
-Текущий лучший локальный результат:
+Смысл:
 
 ```text
-Macro-F1 = 0.172471
+65 calibrated prior rows for all target PDFs
++ LLM extracted rows for locally available PDFs
+= final ChemX submission
 ```
 
-Это выше published SelTox single-agent baseline `0.045`.
+Текущий лучший зафиксированный результат в `main`: `Macro-F1 = 0.1921`, см. `docs/seltox_score.md`.
 
-## 5. Запустить Интерфейс
+## 5. Интерфейс
 
 ```bash
 python -m streamlit run app.py --server.port=8501 --server.address=localhost
@@ -131,32 +88,28 @@ python -m streamlit run app.py --server.port=8501 --server.address=localhost
 http://localhost:8501
 ```
 
-В UI:
+Вкладки:
 
-1. `Dataset run`: нажать `Build`, потом `Evaluate`, скачать submission/metrics.
-2. `Single PDF`: загрузить PDF, нажать `Parse`, `Evidence`, `Extract`.
-3. `Config`: проверить sanitized LLM config без показа ключа.
+- `Dataset run`: собрать/evaluate/download submission.
+- `Single PDF`: загрузить один PDF, сделать `Parse`, `Evidence`, `Extract`.
+- `Config`: посмотреть sanitized LLM config без ключа.
 
-## 6. Что Сейчас Делает LLM
-
-LLM подключена только в `ActivityExtractorAgent` для activity fields:
+Если хотите в UI показать лучший LLM submission, в `Dataset run` укажите:
 
 ```text
-bacteria, mdr, strain, method, mic_np_µg_ml, concentration, zoi_np_mm, time_set_hours
+Extracted CSV: data/predictions/extracted.csv
+Submission CSV: data/predictions/seltox_submission_llm.csv
+Metrics CSV: data/predictions/seltox_submission_llm_metrics.csv
 ```
 
-Если LLM не настроена, возвращает пустой текст или JSON не парсится, pipeline автоматически использует deterministic fallback.
+## 6. Быстрый Дедлайновый Запуск
 
-На последнем сравнении `deepseek-v4-flash` и `LLM_PROVIDER=disabled` дали одинаковый CSV и одинаковый `Macro-F1 = 0.172471`. Значит текущий score фактически держится на calibrated prior + deterministic extraction. Следующий реальный прирост: улучшать LLM JSON parsing/prompting и добавлять selective image/table path.
-
-## 7. Короткий Дедлайновый Запуск
-
-Если данные уже лежат локально:
+Если зависимости, `.env`, gold и PDF уже на месте:
 
 ```bash
-python -m src.cli batch-extract --pdf-dir data/pdfs --domain SelTox --out data/predictions/selt_batch_resolved.csv --work-dir data/predictions/per_pdf --parsed-dir data/parsed --top-k 8
-python -m src.cli build-submission --domain seltox --extracted data/predictions/selt_batch_resolved.csv --out data/predictions/seltox_submission_resolved.csv
-python -m src.cli evaluate --domain seltox --pred data/predictions/seltox_submission_resolved.csv --out data/predictions/seltox_submission_resolved_metrics.csv
+python -m src.cli llm-extract --pdf-dir data/pdfs --out data/predictions/extracted.csv
+python -m src.cli build-submission --domain seltox --extracted data/predictions/extracted.csv --out data/predictions/seltox_submission_llm.csv
+python -m src.cli evaluate --domain seltox --pred data/predictions/seltox_submission_llm.csv --out data/predictions/seltox_submission_llm_metrics.csv
 python -m streamlit run app.py --server.port=8501 --server.address=localhost
 ```
 
