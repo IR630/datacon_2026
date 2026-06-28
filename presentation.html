@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DataCon 2026 — ChemX SelTox</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/black.css" id="theme">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/monokai.css">
+
+  <style>
+    :root { --r-heading-text-transform: none; }
+    .reveal h1 { font-size: 2.0em; }
+    .reveal h2 { font-size: 1.5em; }
+    .reveal .big { font-size: 1.8em; color: #42affa; font-weight: 700; }
+    .reveal .win { color: #4ade80; font-weight: 700; }
+    .reveal .muted { color: #9aa4b2; }
+    .reveal table { font-size: 0.8em; }
+    .reveal table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .reveal .pipe { font-family: monospace; font-size: 0.62em; line-height: 1.35; text-align: left; }
+    .reveal .pipe .hl { color: #42affa; }
+    .reveal small.foot { position: fixed; bottom: 8px; right: 16px; font-size: 0.4em; color: #5b6573; }
+  </style>
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+  <!-- 1. Title -->
+  <section>
+    <h1>Хакатон DataCon 2026</h1>
+    <h3 class="muted">Автоматическая экстракция химических данных из научных PDF</h3>
+    <p class="fragment"><span class="big">ChemX · домен SelTox</span></p>
+    <p class="fragment muted">Превзойти single-agent baseline в <span class="win">4.2×</span></p>
+  </section>
+
+  <!-- 2. Problem -->
+  <section>
+    <h2>Проблема</h2>
+    <ul>
+      <li class="fragment">Химия — наука, перегруженная данными, но результаты заперты в <b>неструктурированных PDF</b>.</li>
+      <li class="fragment">Бенчмарк <b>ChemX</b> (NeurIPS 2025): извлечь структурированные таблицы из статей.</li>
+      <li class="fragment">Главная сложность — данные часто в <b>таблицах, графиках и рисунках</b>, а не в тексте.</li>
+    </ul>
+    <p class="fragment muted">Задача: система экстракции, которая бьёт опубликованный baseline хотя бы на одном домене.</p>
+  </section>
+
+  <!-- 3. Goal / scoring -->
+  <section>
+    <h2>Что считается победой</h2>
+    <table>
+      <tr><th>Критерий</th><th>Баллы</th></tr>
+      <tr class="fragment"><td>Качество экстракции (Macro-F1 vs baseline)</td><td class="num">40</td></tr>
+      <tr class="fragment"><td>Веб-интерфейс</td><td class="num">20</td></tr>
+      <tr class="fragment"><td>Код и воспроизводимость</td><td class="num">20</td></tr>
+      <tr class="fragment"><td>Презентация</td><td class="num">20</td></tr>
+    </table>
+    <p class="fragment muted">+ бонусы за каждый дополнительный домен и за оба направления.</p>
+  </section>
+
+  <!-- 4. Why SelTox -->
+  <section>
+    <h2>Почему SelTox</h2>
+    <ul>
+      <li class="fragment">Наночастицы серебра: антимикробная активность и токсичность, <b>3240 строк</b>.</li>
+      <li class="fragment"><b>Самая низкая планка</b> baseline среди всех доменов: Macro-F1 = <b>0.0454</b>.</li>
+      <li class="fragment">23 целевых поля, без SMILES → проще, чем малые молекулы.</li>
+      <li class="fragment">6 полей у baseline в нуле → много «свободного» хедрума.</li>
+    </ul>
+  </section>
+
+  <!-- 5. The metric -->
+  <section>
+    <h2>Сначала — понять метрику</h2>
+    <p class="fragment">ChemX-метрика: <b>exact-string multiset</b> по строкам внутри статьи, Macro-F1 по 23 полям.</p>
+    <ul>
+      <li class="fragment">Скорятся <b>только</b> 23 целевых поля, не метаданные.</li>
+      <li class="fragment">Формат — <b>per-field</b>: <code>float64 → "10.0"</code>, бинарные → <code>0/1</code>.</li>
+      <li class="fragment">Построили <b>доверенный evaluator</b> — меряем себя честно (all-65 lowercase).</li>
+    </ul>
+    <p class="fragment win">Владение метрикой = половина успеха.</p>
+  </section>
+
+  <!-- 6. Architecture -->
+  <section>
+    <h2>Архитектура (один проход)</h2>
+    <div class="pipe fragment">
+      PDF (+ supplementary)<br>
+      &nbsp;&nbsp;│<br>
+      &nbsp;&nbsp;▼ <span class="hl">1. Parse</span> — текст + таблицы → markdown, страницы → PNG<br>
+      &nbsp;&nbsp;▼ <span class="hl">2. Context</span> — весь документ (262k токенов), без BM25<br>
+      &nbsp;&nbsp;▼ <span class="hl">3. Extract</span> — один schema-driven вызов LLM<br>
+      &nbsp;&nbsp;▼ <span class="hl">4. Normalize</span> — под точный формат gold<br>
+      &nbsp;&nbsp;▼ <span class="hl">5. Submission</span> — prior(65) + извлечённые строки<br>
+      &nbsp;&nbsp;▼ <span class="hl">6. Evaluate</span> — доверенный ChemX-evaluator
+    </div>
+    <p class="fragment muted">Принципы: mono-agent, abstention-first, exact-string под gold.</p>
+  </section>
+
+  <!-- 7. Idea 1: prior floor -->
+  <section>
+    <h2>Идея 1 — калиброванный prior</h2>
+    <p class="fragment">Мажоритарные дефолты по полям с 0% пропусков:</p>
+    <p class="fragment muted"><code>np=Ag · method=MIC · shape=spherical · precursor=AgNO3 · mdr=0 …</code></p>
+    <p class="fragment">Floor <b>без единого вызова LLM</b>:</p>
+    <p class="fragment"><span class="big">0.1357</span> &nbsp;<span class="muted">vs baseline 0.0454</span> &nbsp;→&nbsp; <span class="win">×3 уже здесь</span></p>
+  </section>
+
+  <!-- 8. Idea 2: LLM extraction -->
+  <section>
+    <h2>Идея 2 — LLM-экстракция</h2>
+    <ul>
+      <li class="fragment">Модель <b>Qwen3.6-35B</b> (Yandex AI Studio), контекст 262k, OpenAI-совместимый API.</li>
+      <li class="fragment"><b>Один</b> вызов на статью: весь документ → <code>{samples:[…]}</code>.</li>
+      <li class="fragment">Одна строка на <b>(бактерия × наночастица)</b>.</li>
+      <li class="fragment"><b>Abstention-first</b>: нет в тексте → <code>null</code>, не выдумываем.</li>
+    </ul>
+    <p class="fragment">0.1357 → <span class="big">0.1863</span></p>
+  </section>
+
+  <!-- 9. Idea 3: normalization -->
+  <section>
+    <h2>Идея 3 — нормализация под gold</h2>
+    <p class="fragment">LLM пишет свободно — gold хранит канон. Маппим:</p>
+    <ul>
+      <li class="fragment"><code>method</code>: «Broth microdilution assay» → <b>MIC</b>, «Agar well diffusion» → <b>ZOI</b></li>
+      <li class="fragment"><code>precursor</code>: «Silver nitrate» → <b>AgNO3</b>, прочее → <b>NOT_DETECTED</b></li>
+    </ul>
+    <p class="fragment muted">Возвращает истинные ZOI/MBC, которые MIC-only prior пропускал.</p>
+    <p class="fragment">0.1863 → 0.1887 → <span class="big">0.1921</span></p>
+  </section>
+
+  <!-- 10. Results -->
+  <section>
+    <h2>Результат</h2>
+    <table>
+      <tr><th>Сабмишен</th><th>Macro-F1</th></tr>
+      <tr class="fragment"><td>ChemX single-agent baseline</td><td class="num">0.0454</td></tr>
+      <tr class="fragment"><td>prior-only (без LLM)</td><td class="num">0.1357</td></tr>
+      <tr class="fragment"><td>+ LLM-экстракция</td><td class="num">0.1863</td></tr>
+      <tr class="fragment"><td>+ нормализация method / precursor</td><td class="num"><b class="win">0.1921</b></td></tr>
+    </table>
+    <p class="fragment"><span class="big">×4.2</span> к baseline на SelTox</p>
+  </section>
+
+  <!-- 11. Web UI -->
+  <section>
+    <h2>Веб-интерфейс</h2>
+    <ul>
+      <li class="fragment"><b>Streamlit</b>: загрузил PDF → парсинг → экстракция → таблица.</li>
+      <li class="fragment">Provenance: страница / таблица-источник для каждой строки.</li>
+      <li class="fragment">Скачивание CSV + плашка «наш скор vs baseline».</li>
+    </ul>
+    <p class="fragment muted">Воспроизводимость: pinned deps, CI на каждый PR, GitHub Flow.</p>
+  </section>
+
+  <!-- 12. Conclusion -->
+  <section>
+    <h2>Выводы</h2>
+    <ul>
+      <li class="fragment">Поняли метрику → построили <b>доверенный evaluator</b>.</li>
+      <li class="fragment">Prior + mono-agent LLM + нормализация → <span class="win">0.1921 (×4.2)</span>.</li>
+      <li class="fragment">Дальше: <b>VLM по таблицам/рисункам</b> (MIC/ZOI живут там) и второй домен ради бонуса.</li>
+    </ul>
+    <h3 class="fragment big" style="margin-top:0.6em;">Спасибо! Вопросы?</h3>
+    <small class="foot">DataCon 2026 · ChemX SelTox · Macro-F1 0.1921</small>
+  </section>
+
+</div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/plugin/highlight/highlight.js"></script>
+<script>
+  Reveal.initialize({
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'slide',
+    plugins: [ RevealHighlight ]
+  });
+</script>
+</body>
+</html>
