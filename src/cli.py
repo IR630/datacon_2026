@@ -14,6 +14,7 @@ import pandas as pd
 from src.agents.activity_extractor import ActivityExtractorAgent
 from src.agents.base import LLMClient, LLMNotConfigured, LLMSettings
 from src.agents.nanoparticle_extractor import NanoparticleExtractorAgent
+from src.agents.seltox_extractor import SeltoxExtractor
 from src.agents.synthesis_extractor import SynthesisExtractorAgent
 from src.agents.validator import ValidatorAgent
 from src.baseline_bridge import article_subset, dataset_id, extracted_columns, numeric_columns, schema_path
@@ -141,6 +142,32 @@ def cmd_batch_extract(args: argparse.Namespace) -> None:
     else:
         pd.DataFrame(columns=SELTOX_COLUMNS + ["pdf"]).to_csv(out, index=False)
     print(f"Saved batch prediction CSV: {out}")
+
+
+def cmd_llm_extract(args: argparse.Namespace) -> None:
+    """Phase 3: real LLM extraction over a folder of PDFs into one extracted.csv."""
+    pdf_dir = Path(args.pdf_dir)
+    if not pdf_dir.exists():
+        raise FileNotFoundError(pdf_dir)
+    extractor = SeltoxExtractor()
+    cols = extracted_columns(args.domain.lower())
+    rows: list[dict] = []
+    for pdf in sorted(pdf_dir.glob("*.pdf")):
+        parsed_dir = _parsed_dir_for_pdf(pdf, args.parsed_dir)
+        if not (parsed_dir / "pages.json").exists():
+            parse_pdf(str(pdf), args.parsed_dir)
+        try:
+            records = extractor.extract_pdf(parsed_dir)
+        except LLMNotConfigured as exc:
+            raise SystemExit(f"LLM not configured: {exc}")
+        for record in records:
+            record["pdf"] = pdf.name.lower()
+        rows.extend(records)
+        print(f"  {pdf.name}: {len(records)} rows")
+    out = Path(args.out)
+    ensure_dir(out.parent)
+    pd.DataFrame(rows).reindex(columns=cols + ["pdf"]).to_csv(out, index=False)
+    print(f"Saved extracted rows: {out} ({len(rows)} total)")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -437,6 +464,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work-dir", default="data/predictions/per_pdf")
     p.add_argument("--top-k", type=int, default=8)
     p.set_defaults(func=cmd_batch_extract)
+
+    p = sub.add_parser("llm-extract")
+    p.add_argument("--pdf-dir", required=True)
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--out", required=True)
+    p.add_argument("--parsed-dir", default="data/parsed")
+    p.set_defaults(func=cmd_llm_extract)
 
     p = sub.add_parser("evaluate")
     p.add_argument("--pred", required=True)
