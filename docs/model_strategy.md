@@ -2,25 +2,23 @@
 
 Updated: 2026-06-28.
 
-## Balance / Billing Check
+## Current Recommendation
 
-Yandex AI Studio is working.
+Best current model for final SelTox extraction:
 
-Observed smoke runs:
+```text
+LLM_MODEL=qwen3.6-35b-a3b/latest
+LLM_MAX_OUTPUT_TOKENS=16384
+```
 
-| Model | Result | Observed usage |
-|---|---|---:|
-| `deepseek-v4-flash` | returned `OK` | `34` total tokens |
-| `aliceai-llm-flash` | returned `OK` | `17` total tokens |
-| `qwen3-235b-a22b-fp8` | returned `OK` | `14` total tokens |
-| `qwen3.6-35b-a3b` | no final text, `status=incomplete` in diagnostic response | `146` total tokens in one test |
-| `gpt-oss-120b` | no final text on short smoke | `103` total tokens |
+Why:
 
-If AI Studio balance does not visibly change, that is expected for these smoke tests: the total spend is tiny and billing UI can update with delay. For real budget tracking, use token usage printed by `python -m src.cli llm-smoke`.
+- works in Yandex AI Studio with our OpenAI-compatible wrapper when the output limit is large enough;
+- used by the current `llm-extract` path;
+- current `main` score with Qwen3.6 + postprocessing mappings is `Macro-F1 = 0.1921`;
+- better than the previous deterministic / DeepSeek path (`0.172471` locally).
 
-## Recommended Yandex Setup
-
-Default text extraction:
+Cheap smoke/debug model:
 
 ```text
 LLM_MODEL=deepseek-v4-flash
@@ -28,106 +26,61 @@ LLM_MODEL=deepseek-v4-flash
 
 Why:
 
-- context up to `1M`;
-- OpenAI-compatible API;
-- smoke-tested in this repo;
-- best first choice for long PDF/evidence chunks.
+- fast and stable for short checks;
+- good for `llm-smoke`;
+- not the best current final extraction default.
 
-Cheap debug:
+Other tested options:
 
-```text
-LLM_MODEL=aliceai-llm-flash
-```
+| Model | Recommendation |
+|---|---|
+| `aliceai-llm-flash` | cheap debug only |
+| `qwen3-235b-a22b-fp8` | manual comparison candidate |
+| `gpt-oss-120b` | avoid as default for now |
+| `gpt-oss-20b` | avoid as default for now |
 
-Why:
-
-- smoke-tested;
-- low cost;
-- use for small evidence snippets and prompt iteration.
-
-Second text candidate:
+## Minimal `.env`
 
 ```text
-LLM_MODEL=qwen3-235b-a22b-fp8
+LLM_PROVIDER=yandex
+YANDEX_API_KEY=<your-yandex-api-key>
+YANDEX_FOLDER_ID=<your-folder-id>
+LLM_MODEL=qwen3.6-35b-a3b/latest
+OPENAI_BASE_URL=https://ai.api.cloud.yandex.net/v1
+LLM_TEMPERATURE=0
+LLM_MAX_OUTPUT_TOKENS=16384
 ```
 
-Why:
+## Smoke Tests
 
-- smoke-tested;
-- large model;
-- worth comparing on extraction quality after `deepseek-v4-flash`.
-
-Do not use by default tonight:
-
-```text
-LLM_MODEL=qwen3.6-35b-a3b
-LLM_MODEL=gpt-oss-120b
-```
-
-Reason: both currently spend output tokens but do not produce final visible text with our simple OpenAI-compatible smoke call. `qwen3.6-35b-a3b` is still interesting for image/table recovery because the Yandex docs say it supports Base64 images, but it needs a separate adapter/test before production use.
-
-Also avoid:
-
-```text
-LLM_MODEL=deepseek-v32
-```
-
-The Yandex docs say it was switched in favor of `deepseek-v4-flash`, and the old URI is valid only until 2026-06-28.
-
-## If Using Non-Yandex Models
-
-Best external options for this task:
-
-1. OpenAI latest GPT-5.x family for structured extraction and vision.
-   - Good fit for strict JSON, page images, long context, and tool workflows.
-2. Gemini 2.5 Pro / Flash for long-context multimodal PDF/page-image extraction.
-   - Good fit for large full-document context and table-heavy visual pages.
-3. Claude Sonnet / Opus tier for difficult visual/table reasoning.
-   - Good fit for table reconstruction and conservative extraction.
-
-Practical recommendation:
-
-- Stay on Yandex for broad cheap text extraction now.
-- Add one optional external VLM path only for hard pages/tables where text parser fails.
-- Do not run VLM on every page until we measure cost; route only selected pages with activity tables, figures, or failed table parsing.
-
-## What To Improve Next
-
-Priority order:
-
-1. Improve PDF coverage:
-   - Crossref resolver is useful but misses many Elsevier/ScienceDirect articles.
-   - Add publisher-specific URL heuristics and Unpaywall/OpenAlex lookup.
-2. Improve parser:
-   - install/use `pdfplumber` for tables;
-   - install/use `PyMuPDF` for page rendering and crops.
-3. Improve extraction strategy:
-   - keep one blank prior row for every target PDF;
-   - append extracted rows only when evidence is strong;
-   - numeric blanks must be `nan`, string blanks must be `NOT_DETECTED`.
-4. Improve activity extraction first:
-   - `bacteria`, `strain`, `method`, `mic_np_µg_ml`, `zoi_np_mm`.
-5. Add selective vision/table recovery:
-   - detect likely activity table pages;
-   - send page crop/image to VLM;
-   - parse markdown table back into SelTox rows.
-
-## Useful Commands
+Config only:
 
 ```bash
-python -m src.cli llm-smoke --model deepseek-v4-flash
-python -m src.cli llm-smoke --model aliceai-llm-flash
-python -m src.cli llm-smoke --model qwen3-235b-a22b-fp8
-python -m src.cli resolve-pdfs --domain seltox --start 0 --limit 20
-python -m src.cli batch-extract --pdf-dir data/pdfs --domain SelTox --out data/predictions/selt_batch.csv
-python -m src.cli prior-pred --domain seltox --rows-per-pdf 1 --out data/predictions/seltox_prior_k1.csv
-python -m src.cli evaluate --domain seltox --pred data/predictions/selt_prior_plus_batch_6.csv
+python -m src.cli llm-smoke --dry-run
 ```
+
+Real short request:
+
+```bash
+python -m src.cli llm-smoke --max-output-tokens 1024 --prompt "Return exactly OK."
+```
+
+## Final Extraction
+
+```bash
+python -m src.cli llm-extract --pdf-dir data/pdfs --out data/predictions/extracted.csv
+python -m src.cli build-submission --domain seltox --extracted data/predictions/extracted.csv --out data/predictions/seltox_submission_llm.csv
+python -m src.cli evaluate --domain seltox --pred data/predictions/seltox_submission_llm.csv --out data/predictions/seltox_submission_llm_metrics.csv
+```
+
+## Notes
+
+- Do not commit `.env`, `api.txt`, or anything under `data/`.
+- Qwen3.6 looked bad with tiny `--max-output-tokens 32`, but works when the output budget is large enough.
+- The current submission still needs prior rows for all 65 target PDFs; `build-submission` adds them.
+- The next biggest improvement is more PDF coverage and better table/image extraction.
 
 ## Sources
 
-- Yandex AI Studio base models: https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/generation/models
+- Yandex AI Studio model list: https://aistudio.yandex.ru/docs/ru/ai-studio/concepts/generation/models
 - Yandex AI Studio quickstart: https://aistudio.yandex.ru/docs/ru/ai-studio/quickstart/
-- OpenAI models: https://platform.openai.com/docs/models
-- Gemini models: https://ai.google.dev/gemini-api/docs/models
-- Claude models: https://docs.anthropic.com/en/docs/about-claude/models/overview
