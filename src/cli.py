@@ -31,7 +31,7 @@ from src.eval.chemx_metric_adapter import (
 from src.parse.ensemble import parse_pdf
 from src.postprocess.deduplicate import deduplicate_records
 from src.postprocess.link_records import merge_article_level_records
-from src.postprocess.normalize import normalize_seltox_record
+from src.postprocess.normalize import normalize_seltox_record, seltox_prior_record
 from src.retrieve.evidence_finder import find_evidence
 from src.schemas.selt import SELTOX_COLUMNS
 from src.utils.io import ensure_dir, write_json
@@ -213,6 +213,41 @@ def cmd_inspect_gt_format(args: argparse.Namespace) -> None:
         if col in numeric:
             sample = [v for v in prepared[col].astype(str) if v not in ("nan", "NOT_DETECTED")][:8]
             print(f"  non-missing sample: {sample}")
+
+
+def cmd_build_submission(args: argparse.Namespace) -> None:
+    """Assemble a ChemX submission: one calibrated prior row per target PDF + extracted rows.
+
+    The prior locks the abstention/majority-class floor; extracted rows add true positives.
+    Keeping both is what beats extraction-only (see docs/progress.md).
+    """
+    domain = args.domain.lower()
+    if domain != "seltox":
+        raise SystemExit("build-submission is calibrated for seltox only")
+    cols = extracted_columns(domain)
+    pdfs = [item.lower() for item in (article_subset(domain) or [])]
+    if not pdfs:
+        raise SystemExit(f"No article subset for {domain}")
+    prior = seltox_prior_record()
+    rows = [dict(prior, pdf=pdf) for pdf in pdfs]
+    merged = 0
+    if args.extracted:
+        for record in pd.read_csv(args.extracted).to_dict("records"):
+            pdf = str(record.get("pdf", "")).strip().lower()
+            if not pdf:
+                continue
+            row = normalize_seltox_record(record)
+            row["pdf"] = pdf
+            rows.append(row)
+            merged += 1
+    df = pd.DataFrame(rows).reindex(columns=cols + ["pdf"])
+    df["pdf"] = df["pdf"].astype(str).str.lower()
+    df = df.drop_duplicates()
+    out = Path(args.out)
+    ensure_dir(out.parent)
+    df.to_csv(out, index=False)
+    print(f"Saved submission: {out}")
+    print(f"Prior rows: {len(pdfs)} | extracted merged: {merged} | total after dedup: {len(df)}")
 
 
 def cmd_verify_normalizers(args: argparse.Namespace) -> None:
@@ -428,6 +463,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--domain", default="seltox")
     p.add_argument("--gold-dir", default="data/gold")
     p.set_defaults(func=cmd_verify_normalizers)
+
+    p = sub.add_parser("build-submission")
+    p.add_argument("--domain", default="seltox")
+    p.add_argument("--out", required=True)
+    p.add_argument("--extracted", help="optional extracted predictions CSV to merge with the prior")
+    p.set_defaults(func=cmd_build_submission)
 
     p = sub.add_parser("cache-gold")
     p.add_argument("--domain", default="seltox")

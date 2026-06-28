@@ -9,6 +9,7 @@ from src.postprocess.normalize import (
     normalize_np,
     normalize_seltox_record,
     parse_nm_range,
+    seltox_prior_record,
 )
 
 
@@ -72,4 +73,18 @@ def test_seltox_record_defaults():
     assert out["mdr"] == "0" and out["coating"] == "0"  # binary defaults
     assert out["bacteria"] == "NOT_DETECTED"  # absent string field
     assert out["zoi_np_mm"] == "nan"  # absent numeric field
+
+
+def test_prior_record_majority_defaults():
+    prior = seltox_prior_record()
+    # majority-class defaults (lock the no-LLM floor, Macro-F1 ~0.136)
+    assert prior["np"] == "Ag"
+    assert prior["method"] == "MIC"
+    assert prior["shape"] == "spherical"
+    assert prior["mdr"] == "0" and prior["coating"] == "0"
+    assert prior["precursor_of_np"] == "AgNO3"
+    # majority-missing fields still abstain
+    assert prior["zoi_np_mm"] == "nan"
+    assert prior["concentration_of_precursor_mM"] == "nan"
+    assert prior["strain"] == "NOT_DETECTED"
 
